@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+*.sqlite
+*.db
+# C++ build artifacts
+cpp/tests
+**/cpp/tests
+*.o
+*.out
+# Java build artifacts
+*.class

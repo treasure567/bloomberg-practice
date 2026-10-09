@@ -1,0 +1,2 @@
+class BusError(Exception):
+    pass
