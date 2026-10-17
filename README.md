@@ -38,6 +38,32 @@ Each `python/` keeps a `conftest.py` so the tests you write import the module cl
 C++ implementation is header-only, so you write a `test.cpp` that includes it. For Java you
 write a small `Check.java` with a `main`. See each pack's `SETUP.md`.
 
+## Setting up a working copy
+
+`bin/bloomberg-practice` copies a pack into a working directory so you can edit it and add
+your own tests without touching the shared packs. `create` makes a new folder named
+`<codename>-<lang>` inside the directory you give it (the current directory by default).
+
+```bash
+bin/bloomberg-practice create marlin python ~/practice   # ~/practice/marlin-python/
+bin/bloomberg-practice list --round 2
+```
+
+On Windows, use the bundled PowerShell launcher instead. Windows PowerShell 5.1 is built
+in; PowerShell 7 (`pwsh`) is used automatically when available.
+
+```bat
+bin\bloomberg-practice.cmd create marlin python C:\practice   # C:\practice\marlin-python\
+bin\bloomberg-practice.cmd list --round 2
+```
+
+Add `bin` to your `PATH` to run `bloomberg-practice` from anywhere. `create` copies the
+pack's documents (round 1 briefs, or round 2 tickets), its `README.md`, and the code files
+for only the language you choose, all into the new folder. The code sits at the project
+root; there is no language subfolder. `SETUP.md` is not copied, because it describes the
+repository layout rather than your generated project. It refuses a non-empty target folder
+unless you pass `--force` (`-f`).
+
 ## Round 1 — one service, a few bugs (~35 min, Python / C++ / Java)
 
 One stateful domain object with a lifecycle and invariants to protect. The brief gives you
