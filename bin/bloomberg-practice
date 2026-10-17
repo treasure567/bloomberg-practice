@@ -1,0 +1,271 @@
+#!/usr/bin/env bash
+#
+# bloomberg-practice — set up and browse the practice packs in this repository.
+#
+# Windows users: run bin/bloomberg-practice.cmd, which calls bloomberg-practice.ps1.
+# Keep the two implementations in sync.
+#
+#   bloomberg-practice create <project-name> <lang> [dir] [--force|-f]
+#   bloomberg-practice list [--round <1|2>]
+#
+set -euo pipefail
+
+usage() {
+  cat <<'EOF'
+Usage:
+  bloomberg-practice create <project-name> <lang> [dir] [--force|-f]
+  bloomberg-practice list [--round <1|2>]
+
+Commands:
+  create   Copy a practice pack into a working directory.
+             <project-name>  Pack codename, e.g. marlin or meridian.
+             <lang>          One of: python, cpp, java.
+             [dir]           Parent directory (default: current directory); the project
+                             is created in <dir>/<project-name>-<lang>.
+             -f, --force     Copy into a non-empty directory, overwriting clashes.
+
+  list     List available packs, optionally limited to one round.
+
+Examples:
+  bloomberg-practice create marlin python
+  bloomberg-practice create meridian cpp ~/practice
+  bloomberg-practice create harbor java ~/practice --force
+  bloomberg-practice list
+  bloomberg-practice list --round 2
+EOF
+}
+
+die() {
+  printf 'bloomberg-practice: %s\n' "$*" >&2
+  exit 1
+}
+
+# Locate the repository root. BLOOMBERG_PRACTICE_ROOT wins; otherwise the
+# script may be run directly from bin/ or through a symlink on $PATH.
+resolve_root() {
+  if [ -n "${BLOOMBERG_PRACTICE_ROOT:-}" ]; then
+    [ -d "$BLOOMBERG_PRACTICE_ROOT" ] ||
+      die "BLOOMBERG_PRACTICE_ROOT is not a directory: $BLOOMBERG_PRACTICE_ROOT"
+    (cd -P "$BLOOMBERG_PRACTICE_ROOT" && pwd)
+    return
+  fi
+
+  local src="${BASH_SOURCE[0]}" dir
+  while [ -L "$src" ]; do
+    dir="$(cd -P "$(dirname "$src")" >/dev/null 2>&1 && pwd)"
+    src="$(readlink "$src")"
+    case "$src" in
+      /*) ;;
+      *) src="$dir/$src" ;;
+    esac
+  done
+  dir="$(cd -P "$(dirname "$src")" >/dev/null 2>&1 && pwd)"
+  (cd -P "$dir/.." && pwd)
+}
+
+REPO_ROOT="$(resolve_root)"
+[ -d "$REPO_ROOT/round-1" ] && [ -d "$REPO_ROOT/round-2" ] ||
+  die "cannot find the practice packs under $REPO_ROOT (set BLOOMBERG_PRACTICE_ROOT)"
+
+# Echo the round directory ("round-1" or "round-2") containing the pack.
+find_pack() {
+  local name="$1" round found=""
+
+  case "$name" in
+    ''|.|..) die "invalid project name: $name" ;;
+  esac
+  case "$name" in
+    *[!A-Za-z0-9._-]*) die "invalid project name: $name" ;;
+  esac
+
+  for round in round-1 round-2; do
+    if [ -d "$REPO_ROOT/$round/$name" ]; then
+      [ -z "$found" ] ||
+        die "project '$name' exists in both rounds; codenames must be unique"
+      found="$round"
+    fi
+  done
+
+  [ -n "$found" ] ||
+    die "unknown project: $name (run 'bloomberg-practice list' to see the packs)"
+  printf '%s\n' "$found"
+}
+
+# Print a pack's short description from the README table, if present.
+domain_for() {
+  local round="$1" name="$2"
+  awk -F'|' -v link="[$name]($round/$name)" '
+    index($0, link) {
+      d = $3
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", d)
+      print d
+      exit
+    }
+  ' "$REPO_ROOT/README.md" 2>/dev/null || true
+}
+
+cmd_create() {
+  local force=0 arg
+  local -a pos=()
+
+  for arg in "$@"; do
+    case "$arg" in
+      -f|--force) force=1 ;;
+      -h|--help) usage; exit 0 ;;
+      --) shift; pos+=("$@"); break ;;
+      -*) die "unknown option for create: $arg" ;;
+      *) pos+=("$arg") ;;
+    esac
+  done
+
+  if [ "${#pos[@]}" -lt 2 ]; then
+    usage >&2
+    die "create needs <project-name> and <lang>"
+  fi
+  if [ "${#pos[@]}" -gt 3 ]; then
+    die "too many arguments: ${pos[*]}"
+  fi
+
+  local name="${pos[0]}" lang="${pos[1]}" dest="${pos[2]:-.}"
+  case "$lang" in
+    python|cpp|java) ;;
+    *) die "unsupported language: $lang (choose python, cpp, or java)" ;;
+  esac
+
+  local round pack
+  round="$(find_pack "$name")"
+  pack="$REPO_ROOT/$round/$name"
+
+  if [ -e "$dest" ] && [ ! -d "$dest" ]; then
+    die "destination exists and is not a directory: $dest"
+  fi
+
+  local target="$dest/$name-$lang"
+  if [ -e "$target" ] && [ ! -d "$target" ]; then
+    die "project path exists and is not a directory: $target"
+  fi
+  if [ -d "$target" ] && [ -n "$(ls -A "$target")" ] && [ "$force" -ne 1 ]; then
+    die "project directory is not empty: $target (use --force to copy anyway)"
+  fi
+
+  mkdir -p "$target"
+
+  local f
+  for f in "$pack"/*.md; do
+    [ -e "$f" ] || continue
+    case "$f" in */SETUP.md) continue ;; esac
+    cp -f "$f" "$target/"
+  done
+
+  if [ -d "$pack/tickets" ]; then
+    mkdir -p "$target/tickets"
+    cp -Rf "$pack/tickets/." "$target/tickets/"
+  fi
+
+  cp -Rf "$pack/$lang/." "$target/"
+
+  local round_num="${round#round-}"
+  printf 'Created %s (round %s, %s) in %s\n' \
+    "$name" "$round_num" "$lang" "$(cd -P "$target" && pwd)"
+  printf '  documents: '
+  local first=1
+  for f in "$pack"/*.md; do
+    [ -e "$f" ] || continue
+    case "$f" in */SETUP.md) continue ;; esac
+    [ "$first" -eq 1 ] || printf ', '
+    printf '%s' "$(basename "$f")"
+    first=0
+  done
+  if [ -d "$pack/tickets" ]; then
+    [ "$first" -eq 1 ] || printf ', '
+    printf 'tickets/'
+  fi
+  printf '\n  code:      %s files in project root\n' "$lang"
+  printf 'Next: read the documents, then write a test that reproduces a reported problem.\n'
+}
+
+cmd_list() {
+  local round_filter="" arg
+  while [ "$#" -gt 0 ]; do
+    arg="$1"
+    case "$arg" in
+      --round|-r)
+        [ "$#" -ge 2 ] || die "$arg needs a value (1 or 2)"
+        round_filter="$2"
+        shift 2
+        ;;
+      --round=*)
+        round_filter="${arg#*=}"
+        shift
+        ;;
+      -h|--help)
+        usage
+        exit 0
+        ;;
+      -*)
+        die "unknown option for list: $arg"
+        ;;
+      *)
+        die "unexpected argument for list: $arg"
+        ;;
+    esac
+  done
+
+  case "$round_filter" in
+    "") ;;
+    1|round-1) round_filter=1 ;;
+    2|round-2) round_filter=2 ;;
+    *) die "invalid round: $round_filter (choose 1 or 2)" ;;
+  esac
+
+  local round num name domain total=0
+  local -a packs
+  for round in round-1 round-2; do
+    num="${round#round-}"
+    [ -z "$round_filter" ] || [ "$round_filter" = "$num" ] || continue
+
+    packs=()
+    while IFS= read -r name; do
+      packs+=("$name")
+    done < <(
+      find "$REPO_ROOT/$round" -mindepth 1 -maxdepth 1 -type d -exec basename {} \; |
+        sort
+    )
+    [ "${#packs[@]}" -eq 0 ] && continue
+
+    printf 'Round %s (%d projects)\n' "$num" "${#packs[@]}"
+    for name in "${packs[@]}"; do
+      domain="$(domain_for "$round" "$name")"
+      if [ -n "$domain" ]; then
+        printf '  %-12s %s\n' "$name" "$domain"
+      else
+        printf '  %s\n' "$name"
+      fi
+      total=$((total + 1))
+    done
+    [ -z "$round_filter" ] && printf '\n'
+  done
+
+  [ "$total" -gt 0 ] || die "no projects found"
+}
+
+case "${1:-}" in
+  create)
+    shift
+    cmd_create "$@"
+    ;;
+  list)
+    shift
+    cmd_list "$@"
+    ;;
+  -h|--help|help)
+    usage
+    ;;
+  "")
+    usage >&2
+    exit 1
+    ;;
+  *)
+    die "unknown command: $1 (try 'bloomberg-practice --help')"
+    ;;
+esac
